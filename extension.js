@@ -1,3 +1,8 @@
+/**
+ * Roam Research 2024–2025 Compatible Version
+ * CJK Bracket Auto-Pair + Double-Bracket Conversion + Symbol Conversion
+ */
+
 const cjkBracketPairs = {
     "【": "】",
     "（": "）",
@@ -6,7 +11,7 @@ const cjkBracketPairs = {
 };
 
 const cjkDoubleBracketPairs = {
-    "【【": "】】", 
+    "【【": "】】",
     "（（": "））",
 
     "『「": "』」",
@@ -16,17 +21,17 @@ const cjkDoubleBracketPairs = {
 };
 
 const cjkBracketToRefPatterns = {
-    "【【": "[[", 
-    "】】": "]]", 
+    "【【": "[[",
+    "】】": "]]",
 
-    "（（": "((", 
-    "））": "))", 
+    "（（": "((",
+    "））": "))",
 
     "『「": "{{",
     "』」": "}}",
 
     "「『": "{{",
-    "」』": "}}",   
+    "」』": "}}",
 
     "『『": "{{",
     "』』": "}}",
@@ -36,163 +41,140 @@ const cjkBracketToRefPatterns = {
 };
 
 const CJKToRoamSymbols = {
-    "：：": "::", 
+    "：：": "::",
     "；；": ";;",
 };
 
 const CJKToRoamSymbolsCursorPositionAfterConverting = {
-    "：：": "left", 
-    "；；": "right",  
+    "：：": "left",
+    "；；": "right",
+};
+
+
+function assert(x) {
+    if (!x) throw new Error("Assertion failed");
 }
 
-function assert (assertion) {
-    if (!assertion) {
-        throw "Assertion failed."
-    }
-}
-
-function _dispatchManualEventWhenPreventingDefaultEventBehavior (originalEvent) {
-
-    // For triggering Roam updating database, like what Roam does after handling '[' and '(' auto-pairing and deleteion.
-    
-    assert(originalEvent.cancelable);
-    assert(originalEvent.defaultPrevented);
-
-    assert(originalEvent instanceof KeyboardEvent);
-    assert(originalEvent.type == 'keydown');
-
-    assert(isEditingBlockWithDOMElement(originalEvent.target));
-
-    setTimeout(() => {
-        let manualEvent = new Event('input', originalEvent);
-        originalEvent.target.dispatchEvent(manualEvent);
-    }, 0);
-}
-
-function preventDefaultKeybordEventBehaviorForInputElementAndSetRangeTextPreservingCursorPosition(event, element, substitution, selectionStart, selectionEnd) {
-    
-    assert(event.target == element);
-    assert(!event.defaultPrevented);
-
-    assert(isEditingBlockWithDOMElement(element));
-
-    element.setRangeText(substitution, selectionStart, selectionEnd, "preserve");
-
-    event.preventDefault();
-
-    _dispatchManualEventWhenPreventingDefaultEventBehavior(event);
-}
-
-function isEditingBlockWithDOMElement(element) {
-
-    const isTextAreaElement = (element instanceof HTMLTextAreaElement);
-    const isActiveElement = (element == document.activeElement);
-    const isDOMElementOfBlock = element.className.includes('rm-block-input');
+/**
+ * New: Robust detection for Roam textarea (2024–2025 UI)
+ */
+function isEditingBlockWithDOMElement(el) {
+    if (!(el instanceof HTMLTextAreaElement)) return false;
+    if (el !== document.activeElement) return false;
 
     return (
-        isTextAreaElement
-        && 
-        isActiveElement
-        && 
-        isDOMElementOfBlock
+        el.className.includes("rm-block") ||
+        el.classList.contains("rm-block-input") ||
+        el.classList.contains("rm-block__input-area") ||
+        el.closest(".rm-block-main")
     );
 }
 
-function isEditingBlockAndIsNotComposingWithKeyboardEvent(event) {
-    const isEditingBlock = isEditingBlockWithDOMElement(event.target);
-    const isNotComposing = event.isComposing != undefined && event.isComposing == false;
-    return isEditingBlock && isNotComposing;
+/**
+ * Prevent default behavior, update textarea, and trigger Roam DB update.
+ */
+function preventDefaultWithSubstitution(event, el, substitution, start, end) {
+    assert(event.target === el);
+    assert(!event.defaultPrevented);
+
+    el.setRangeText(substitution, start, end, "preserve");
+    event.preventDefault();
+
+    // NEW: ensure it bubbles so Roam captures the update
+    setTimeout(() => {
+        const manualEvent = new Event("input", { bubbles: true });
+        el.dispatchEvent(manualEvent);
+    }, 0);
 }
 
 function handleKeyDown(event) {
-	if (isEditingBlockAndIsNotComposingWithKeyboardEvent(event)) {
+    const el = event.target;
+    if (!isEditingBlockWithDOMElement(el)) return;
+    if (event.isComposing === true) return;
 
-        const keyName = event.key;
-        const inputElement = event.target;
+    const key = event.key;
+    const text = el.value;
+    const ss = el.selectionStart;
+    const se = el.selectionEnd;
 
-        const selectionStart = inputElement.selectionStart;
-        const selectionEnd = inputElement.selectionEnd;
+    const charBefore = ss > 0 ? text.charAt(ss - 1) : null;
+    const charAfter = se < text.length ? text.charAt(se) : null;
 
-        const textValue = inputElement.value;
+    // -------------------------------------------------------------
+    // 1. CJK Left Bracket Auto-pairing
+    // -------------------------------------------------------------
+    if (key in cjkBracketPairs) {
+        let substitution = text.substring(ss, se);
+        const leftSide = charBefore + key;
+        const rightSide = cjkBracketPairs[key] + charAfter;
 
-        const charBeforeCursor = selectionStart > 0 ? textValue.charAt(selectionStart - 1) : null;
-        const charAfterCursor = selectionEnd == textValue.length ? null : textValue.charAt(selectionEnd);
+        // Double bracket → Convert into [[ ]] or {{ }}
+        if (
+            leftSide in cjkDoubleBracketPairs &&
+            cjkDoubleBracketPairs[leftSide] === rightSide
+        ) {
+            const leftPattern = cjkBracketToRefPatterns[leftSide];
+            const rightPattern = cjkBracketToRefPatterns[rightSide];
 
-        if (Object.keys(cjkBracketPairs).includes(keyName)) {
+            substitution = leftPattern + substitution + rightPattern;
+            preventDefaultWithSubstitution(event, el, substitution, ss - 1, se + 1);
 
-            let substitution = textValue.substring(selectionStart, selectionEnd);
-
-            const leftSide = charBeforeCursor + keyName;
-            const rightSide = cjkBracketPairs[keyName] + charAfterCursor;
-
-            if (Object.keys(cjkDoubleBracketPairs).includes(leftSide) && Object.values(cjkDoubleBracketPairs).includes(rightSide) && cjkDoubleBracketPairs[leftSide] === rightSide) {
-                let leftPair = cjkBracketToRefPatterns[leftSide];
-                let rightPair = cjkBracketToRefPatterns[rightSide];
-
-                assert(leftPair != undefined);
-                assert(rightPair != undefined);
-
-                substitution = leftPair + substitution + rightPair;
-                preventDefaultKeybordEventBehaviorForInputElementAndSetRangeTextPreservingCursorPosition(
-                    event, inputElement, 
-                    substitution, selectionStart - 1, selectionEnd + 1
-                );
-            }
-            else {
-                substitution = keyName + substitution + cjkBracketPairs[keyName];
-                preventDefaultKeybordEventBehaviorForInputElementAndSetRangeTextPreservingCursorPosition(
-                    event, inputElement, 
-                    substitution, selectionStart, selectionEnd
-                );
-            }
-            
-            inputElement.setSelectionRange(selectionStart + 1, selectionEnd + 1)
-
-        }
-        else if (Object.keys(CJKToRoamSymbols).includes(charBeforeCursor + keyName)) {
-
-            let substitution = CJKToRoamSymbols[charBeforeCursor + keyName];
-            let cursorPositionAfterConverting = CJKToRoamSymbolsCursorPositionAfterConverting[charBeforeCursor + keyName];
-
-            preventDefaultKeybordEventBehaviorForInputElementAndSetRangeTextPreservingCursorPosition(
-                event, inputElement,
-                substitution, selectionStart - 1, selectionEnd
-            );
-
-            if (cursorPositionAfterConverting == "left") {
-                inputElement.setSelectionRange(0, 0);
-            } 
-            else if (cursorPositionAfterConverting == "right") {
-                inputElement.setSelectionRange(selectionEnd + 1, selectionEnd + 1);
-            }
-
-        }
-        else if (keyName === 'Backspace') {
-            if (selectionStart == selectionEnd) {
-                if (Object.keys(cjkBracketPairs).includes(charBeforeCursor) && Object.values(cjkBracketPairs).includes(charAfterCursor) && (cjkBracketPairs[charBeforeCursor] == charAfterCursor)) {
-                    let substitution = '';
-                    
-                    preventDefaultKeybordEventBehaviorForInputElementAndSetRangeTextPreservingCursorPosition(
-                        event, inputElement, 
-                        substitution, selectionStart - 1, selectionEnd + 1
-                    );
-                }
-            }
+            el.setSelectionRange(ss + 1, se + 1);
+            return;
         }
 
+        // Normal single bracket auto-pairing
+        substitution = key + substitution + cjkBracketPairs[key];
+        preventDefaultWithSubstitution(event, el, substitution, ss, se);
+
+        el.setSelectionRange(ss + 1, se + 1);
+        return;
+    }
+
+    // -------------------------------------------------------------
+    // 2. Convert ：： → ::  or  ；； → ;;
+    // -------------------------------------------------------------
+    const twoChars = charBefore + key;
+    if (twoChars in CJKToRoamSymbols) {
+        const substitution = CJKToRoamSymbols[twoChars];
+        const cursorPosition = CJKToRoamSymbolsCursorPositionAfterConverting[twoChars];
+
+        preventDefaultWithSubstitution(event, el, substitution, ss - 1, se);
+
+        if (cursorPosition === "left") {
+            el.setSelectionRange(0, 0);
+        } else if (cursorPosition === "right") {
+            el.setSelectionRange(ss + 1, ss + 1);
+        }
+        return;
+    }
+
+    // -------------------------------------------------------------
+    // 3. Backspace auto-delete matching CJK bracket pair
+    // -------------------------------------------------------------
+    if (key === "Backspace") {
+        if (ss === se) {
+            if (
+                charBefore &&
+                charAfter &&
+                cjkBracketPairs[charBefore] === charAfter
+            ) {
+                preventDefaultWithSubstitution(event, el, "", ss - 1, se + 1);
+                return;
+            }
+        }
     }
 }
 
-
+/**
+ * Main Life-cycle
+ */
 function onload() {
-	document.addEventListener('keydown', handleKeyDown, false);
+    document.addEventListener("keydown", handleKeyDown);
 }
 
 function onunload() {
-	document.removeElementListener('keydown', handleKeyDown);
+    document.removeEventListener("keydown", handleKeyDown);
 }
 
-export default {
-	onload: onload,
-	onunload: onunload
-}
+export default { onload, onunload };
